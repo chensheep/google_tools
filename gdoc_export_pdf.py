@@ -70,17 +70,54 @@ def get_client_secret():
 def check_client_secret():
     return path.exists("client_secret.json")
 
-def check_token_exist ():
-    access_token = ""
-    if (path.exists("accsee_token") != True):
-        return ""
-    with open("accsee_token", "r") as file:
-        access_token = file.readline()
-    return access_token
+TOKEN_FILE_NAME = "token_data"
 
-def record_access_token(access_token):
-    with open('accsee_token', 'w+') as the_file:
-        the_file.write(access_token)
+def check_token_file_exist ():
+    return path.exists(TOKEN_FILE_NAME)
+
+def get_access_token_in_file():
+    if (check_token_file_exist() != True):
+        return ""
+    with open(TOKEN_FILE_NAME, "r") as file:
+        data_token_list = file.readlines()
+        data_token = ""
+        data_token = data_token.join(data_token_list)
+        try:
+            td = json.loads(data_token)
+        except Exception as e:
+            return ""
+    return td["access_token"]
+
+def get_refresh_token_in_file():
+    if (check_token_file_exist() != True):
+        return ""
+    with open(TOKEN_FILE_NAME, "r") as file:
+        data_token_list = file.readlines()
+        data_token = ""
+        data_token = data_token.join(data_token_list)
+        try:
+            td = json.loads(data_token)
+        except Exception as e:
+            return ""
+    return td["refresh_token"]
+
+def update_access_token_in_file(access_token):
+    if (check_token_file_exist() != True):
+        return
+    with open(TOKEN_FILE_NAME, "r") as file:
+        data_token_list = file.readlines()
+        data_token = ""
+        data_token = data_token.join(data_token_list)
+        try:
+            td = json.loads(data_token)
+            td['access_token'] = access_token
+            record_access_token(json.dumps(td))
+        except Exception as e:
+            return ""
+
+def record_access_token(token_data):
+    with open('token_data', 'w+') as the_file:
+        the_file.write(token_data)
 
 def build_authorization_link(scopes):
 
@@ -106,7 +143,7 @@ myobj = {'somekey': 'somevalue'}
 
 x = requests.post(url, data = myobj)
 
-def get_access_token(auth_code):
+def get_access_token_from_server(auth_code):
     post_url = "https://oauth2.googleapis.com/token"
     post_data = {
         'code': auth_code,
@@ -116,9 +153,38 @@ def get_access_token(auth_code):
         'grant_type': 'authorization_code'
     }
     result = requests.post(post_url, data = post_data)
-    print("%s" % result.text)
-    rj = json.loads(result.text)
-    return rj["access_token"]
+    if result.status_code == 200:
+        print ("Succeeded to get access_token.")
+        record_access_token(result.text)
+        try:
+            td = json.loads(result.text)
+        except Exception as e:
+            return ""
+        return td["access_token"]
+    else:
+        print ("Failed to get access_token.")
+        return ""
+
+def refresh_token():
+    post_url = "https://oauth2.googleapis.com/token"
+    post_data = {
+        'client_id': get_client_id(),
+        'client_secret': get_client_secret(),
+        'grant_type': 'refresh_token',
+        'refresh_token': get_refresh_token_in_file()
+    }
+    result = requests.post(post_url, data = post_data)
+    if result.status_code == 200:
+        print ("Succeeded to refresh access_token.")
+        try:
+            td = json.loads(result.text)
+        except Exception as e:
+            return ""
+        update_access_token_in_file(td["access_token"])
+        return td["access_token"]
+    else:
+        print ("Failed to refresh access_token.")
+        return ""
 
 def export_gdoc_to_pdf(access_token, gdoc_id):
     get_url = "https://docs.google.com/document/d/" + gdoc_id + "/export?format=pdf"
@@ -126,10 +192,11 @@ def export_gdoc_to_pdf(access_token, gdoc_id):
     result = requests.get(get_url, headers=get_headers, allow_redirects=True)
     if result.status_code != 200:
         print("export failed! error : %d" % (result.status_code))
-        return
+        return result.status_code
     with open('./output.pdf', 'wb+') as f:
         f.write(result.content)
     print("pdf output.pdf saved!")
+    return 200
 
 class InputValidator(Validator):
     def validate(self, document):
@@ -144,8 +211,9 @@ if __name__ == '__main__':
         print ("Please get client_secret.json with https://console.developers.google.com/")
         exit()
 
-    access_token = check_token_exist()
-    if access_token == "":
+    access_token = ""
+
+    if check_token_file_exist() == False:
 
         scopes = [
             "https://www.googleapis.com/auth/documents",
@@ -161,17 +229,29 @@ if __name__ == '__main__':
 
         authorization_code = prompt_input_questions('authorization_code', 'Please enter authorization code:', InputValidator)
 
-        access_token = get_access_token(authorization_code)
+        access_token = get_access_token_from_server(authorization_code)
 
-        if access_token != "":
-            record_access_token(access_token)
+        if access_token == "":
+            print("get_access_token_from_server failed.")
 
     else:
         #TODO check token is available & refresh token
         print ("Using exisiting access_token ... ")
         print ("If you wanna use new token, please remove file accsee_token and run program again")
+        access_token = get_access_token_in_file()
+
+    if access_token == "":
+        print ("Not found access_token!")
+        exit()
 
     gdoc_id = prompt_input_questions('gdoc_id', 'Please enter google document id:', InputValidator)
 
-    export_gdoc_to_pdf(access_token, gdoc_id)
+    res = export_gdoc_to_pdf(access_token, gdoc_id)
+    if res != 200:
+        if res == 401:
+            print ("Received 401 unauthorized, try to refrshing token & export again")
+            access_token = refresh_token()
+            res = export_gdoc_to_pdf(access_token, gdoc_id)
+
+
 
