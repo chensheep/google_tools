@@ -124,6 +124,9 @@ def export_gdoc_to_pdf(access_token, gdoc_id):
     get_url = "https://docs.google.com/document/d/" + gdoc_id + "/export?format=pdf"
     get_headers = {"Authorization": "Bearer " + access_token}
     result = requests.get(get_url, headers=get_headers, allow_redirects=True)
+    if result.status_code != 200:
+        print("export failed! error : %d" % (result.status_code))
+        return
     with open('./output.pdf', 'wb+') as f:
         f.write(result.content)
     print("pdf output.pdf saved!")
